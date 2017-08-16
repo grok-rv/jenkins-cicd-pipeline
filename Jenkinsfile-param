@@ -1,0 +1,280 @@
+#!/usr/bin/env groovy
+/**
+* this is a cicd pipeline jenkinsfile for engage store morpheus poc
+*/
+import hudson.model.*
+import groovy.json.JsonSlurperClassic
+import groovy.json.JsonBuilder
+import groovy.json.JsonOutput
+import groovy.util.*
+
+
+
+def slackNotificationChannel = 'engage-pipeline'
+//def buildColor = currentBuild.result == null ? "good" : "warning"
+//def buildStatus = currentBuild.result == null ? "SUCCESS" : currentBuild.result
+//def buildStatus = currentBuild.result
+
+
+def notifySlack(text, channel, attachments) {
+    def slackURL = 'https://hooks.slack.com/services/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'
+    def jenkinsIcon = 'https://wiki.jenkins-ci.org/download/attachments/2916393/logo.png'
+    def payload = JsonOutput.toJson([text      : text,
+                                     channel   : channel,
+                                     username  : "Jenkins",
+                                     attachments: attachments,
+                                     icon_url: jenkinsIcon ])
+    sh "curl -X POST --data-urlencode \'payload=${payload}\' ${slackURL}"
+}
+/**
+//def author= "";
+def author = sh(returnStdout: true, script: "git --no-pager show -s --format='%an' ${commit}").trim()
+def message =  sh(returnStdout: true, script: 'git log -1 --pretty=%B').trim()
+*/
+
+pipeline {
+
+  agent {
+    node { label 'ecrtest' }
+  }
+  /**
+  parameters {
+      choice(
+          // choices are a string of newline separated values
+          choices:'#deploy-frontend\n#deploy-statistics\n#deploy-dump',
+          description: '',
+          name: 'deploy-container')
+  }*/
+  /**
+  properties([
+    parameters([
+      string(name: 'branch', defaultValue: 'master', description :' the git source code branch')
+    ])
+  ]) */
+
+  options {
+      // Discard the old builds and keep only the 7 most recent builds
+      buildDiscarder(logRotator(numToKeepStr:'10'))
+
+      //retry the entire pipeline for 3 times on failure
+      retry(3)
+
+      //abort the pipeline if it's more than 2 hours
+      timeout(time: 3, unit: 'HOURS')
+
+      //disable concurrent executions of pipeline
+      disableConcurrentBuilds()
+  }
+
+  stages {
+    // checkout the git source code repo
+    /**stage('Checkout SCM') {
+      steps {
+        checkout scm
+        echo "checked out engage-cicdtest-store source git repo"
+      }
+    }*/
+
+    stage('Git Checkout') {
+      steps{
+        dir('engage-store') {
+          git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-store.git'
+        }
+        dir('engage-backend-padrino') {
+            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-backend-padrino.git'
+        }
+        dir('engage-backend-railsapi') {
+            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-backend-railsapi.git'
+        }
+        dir('campaign_manager') {
+            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/campaign_manager.git'
+        }
+        dir('engage-cicdtest-store') {
+            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-cicdtest-store.git'
+
+        }
+      }
+    }
+    
+    
+    //Run the tests, integration, uitests locally
+    stage('Run Tests Locally') {
+      steps {
+        retry(3) {
+            dir('engage-cicdtest-store/bluefox/docker/tests') {
+                sh './docker_test.sh'
+            }
+            /**
+            dir('engage-store/bluefox/docker/integration') {
+                sh './docker_test.sh'
+            }
+            dir('engage-store/bluefox/docker/uitests') {
+            sh './docker_test.sh'
+            } */
+        }
+      }
+    }
+    
+    
+    stage('Abort or Proceed Deploy') {
+        steps {
+            dir('engage-cicdtest-store/scripts') {
+              script {
+                try {
+                    sh 'python commit_message.py'
+                    //sh 'exit 1'
+                } catch (err) {
+                    echo "caught: ${err}"
+                    currentBuild.result= 'ABORTED'
+                    notifySlack("", slackNotificationChannel, [[
+                        title: "Deploy containers ABORTED",
+                        title_link: "${env.BUILD_URL}",
+                        text: "${currentBuild.result}",
+                        color: "grey"
+                    ]])
+                    
+                    emailext(
+                        subject: "Deployment Failed! - ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                        body: """FAILURE!: '${env.JOB_NAME} [${env.BUILD_NUMBER}]'
+                        Check console output at <a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]/a>""",
+                        to: "ramu.venumuddala@bluefox.io"
+                    )
+                }
+              }
+            }
+        }
+    }
+    
+    /**
+    
+    //Build engage-store-frontend Image
+    stage('Deploy engage-store Containers') {
+        steps {
+           dir('engage-cicdtest-store/scripts') {
+                sh './commitmessage.sh'
+            }
+        }
+    } */
+        
+    
+    // Verify git commit id
+    stage('Verify commitid and prodtests') {
+      steps {
+        dir('engage-cicdtest-store/scripts') {
+            script {
+                try {
+                    sh './verifycommitid_prodtest.sh'
+                } catch(err) {
+                    echo "caught: ${err}"
+                    sh './restore_recycle.sh'
+                    currentBuild.result = 'FAILURE'
+                    notifySlack("", slackNotificationChannel, [[
+                        title: "Verify commitid and prodtests failed. Restore and Recycle!",
+                        title_link: "${env.BUILD_URL}",
+                        text: "${currentBuild.result}",
+                        color: "danger"
+                    ]])
+                    emailext(
+                        subject: "Deployment Failed! - ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                        body: """Build failed due to verify commitid tests!: '${env.JOB_NAME} [${env.BUILD_NUMBER}]'
+                        Check console output at <a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]/a>""",
+                        to: "ramu.venumuddala@bluefox.io"
+                    )
+
+                }
+            }
+         
+        }
+      }
+    }  
+
+        /*dir('engage-store') {
+            script {
+                //sh 'pwd > outFile'
+                //def last_commit =  sh ( script: 'git rev-parse HEAD', returnStdout: true )
+                //def commit_message = sh ( script: 'git log -1 --pretty=%B', returnStdout: true )
+                //def morpheus_commitid= sh ( script: 'curl https://morpheus-frontend.bluefoxengage.com/api/v1/health_check | awk -F " " '{print \$3}'', returnStdout: true )
+                //if(last_commit == morpheus_commit)
+                //println "commitid tests are success and proceed to prodtests. cmess is ${commit_message} and mid is ${morpheus_commitid}"
+               // else
+                //sh 'exit 1'
+                //status = readFile 'outFile'
+                //println "current directory is ${status}"
+            }
+        } */
+    
+
+
+  }
+  
+
+  post {
+    /**always {
+            //notifySlack("Build Success!",slackChannel)
+            echo "Build ${env.JOB_NAME}"
+            //build junit files
+            junit 'engage-store/bluefox/docker/tests/*.xml'
+            junit 'engage-store/bluefox/docker/integration/*.xml'
+            junit 'engage-store/bluefox/docker/uitests/*.xml'
+            //build artifacts
+            archiveArtifacts artifacts: 'engage-store/bluefox/docker/uitests/artifacts/*', fingerprint: true
+            archiveArtifacts artifacts: 'engage-store/bluefox/docker/'
+    }*/
+    success {
+            notifySlack("", slackNotificationChannel, [[
+                title: "${env.JOB_NAME}, build #${env.BUILD_NUMBER}",
+                title_link: "${env.BUILD_URL}",
+                text: "SUCCESS",
+                color: "good"
+
+            ]])
+
+            emailext(
+                subject: "${env.JOB_NAME} [${env.BUILD_NUMBER}] Success!",
+                body: """'${env.JOB_NAME} [${env.BUILD_NUMBER}]' Success!":</p>
+                    <p>Check console output at <a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]/a></p>""",
+                to: "ramu.venumuddala@bluefox.io"
+            )
+    }
+    
+    failure {
+        //echo "Build ${env.JOB_NAME} failed"
+        notifySlack("", slackNotificationChannel, [[
+                title: "${env.JOB_NAME}, build #${env.BUILD_NUMBER}",
+                title_link: "${env.BUILD_URL}",
+                text: "Deployment Failed and Rollback",
+                color: "danger"
+
+        ]])
+
+        emailext(
+                subject: "Deployment Failed! - ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                body: """FAILURE!: '${env.JOB_NAME} [${env.BUILD_NUMBER}]'
+                    Check console output at <a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]/a>""",
+                to: "ramu.venumuddala@bluefox.io"
+        )
+
+    }
+    
+    unstable {
+        //echo "Build ${env.JOB_NAME} failed"
+        notifySlack("", slackNotificationChannel, [[
+                title: "${env.JOB_NAME}, build #${env.BUILD_NUMBER}",
+                title_link: "${env.BUILD_URL}",
+                text: "Deployment Aborted!!",
+                color: "grey"
+
+        ]])
+
+        emailext(
+                subject: "Deployment Aborted! - ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                body: """Aborted!: '${env.JOB_NAME} [${env.BUILD_NUMBER}]'
+                    Check console output at <a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]/a>""",
+                to: "ramu.venumuddala@bluefox.io"
+        )
+
+    }
+    
+    
+  }
+}
