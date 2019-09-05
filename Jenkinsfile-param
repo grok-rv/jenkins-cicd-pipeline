@@ -17,7 +17,7 @@ def slackNotificationChannel = 'engage-pipeline'
 
 
 def notifySlack(text, channel, attachments) {
-    def slackURL = 'https://hooks.slack.com/services/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'
+    def slackURL = 'https://hooks.slack.com/services/T3Uxxxxxx/B5xxxx/8hyuxxxx'
     def jenkinsIcon = 'https://wiki.jenkins-ci.org/download/attachments/2916393/logo.png'
     def payload = JsonOutput.toJson([text      : text,
                                      channel   : channel,
@@ -78,19 +78,19 @@ pipeline {
     stage('Git Checkout') {
       steps{
         dir('engage-store') {
-          git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-store.git'
+          git branch: 'master', credentialsId: '', url: 'git@github.com:xxx/xxx.git'
         }
         dir('engage-backend-padrino') {
-            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-backend-padrino.git'
+            git branch: 'master', credentialsId: '', url: 'git@github.com:xxx/xxx.git'
         }
         dir('engage-backend-railsapi') {
-            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-backend-railsapi.git'
+            git branch: 'master', credentialsId: '', url: 'git@github.com:xxx/xxx.git'
         }
         dir('campaign_manager') {
-            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/campaign_manager.git'
+            git branch: 'master', credentialsId: '', url: 'git@github.com:xxx/xxx.git'
         }
         dir('engage-cicdtest-store') {
-            git branch: 'master', credentialsId: '57d45f38-1796-4f60-aa0c-c54e469ee595', url: 'git@github.com:bluefoxio/engage-cicdtest-store.git'
+            git branch: 'master', credentialsId: '', url: 'git@github.com:xxx/xxx.git'
 
         }
       }
